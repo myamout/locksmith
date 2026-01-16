@@ -1,0 +1,10 @@
+[tools]
+go = "1.25.5"
+
+[tasks."install"]
+description = "install project dependencies"
+run = "go mod download"
+
+[tasks."test"]
+description = "Run test suites"
+run = "go test -v -cover ./..."
