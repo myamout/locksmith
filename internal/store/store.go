@@ -5,12 +5,53 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/myamout/locksmith/internal/lock"
 )
 
 type LockSessionStore struct {
 	locks      map[string]*lock.LockEntry
 	fenceToken int
+}
+
+type lockStoreSnapshot struct {
+	Locks      map[string]*lock.LockEntry `json:"locks"`
+	FenceToken int                        `json:"fenceToken"`
+}
+
+func NewLockSessionStore() *LockSessionStore {
+	return &LockSessionStore{
+		locks: make(map[string]*lock.LockEntry),
+	}
+}
+
+func (ls *LockSessionStore) Encode() ([]byte, error) {
+	snapshot := lockStoreSnapshot{
+		Locks:      make(map[string]*lock.LockEntry),
+		FenceToken: ls.fenceToken,
+	}
+
+	for k, v := range ls.locks {
+		snapshot.Locks[k] = v
+	}
+
+	return sonic.Marshal(snapshot)
+}
+
+func (ls *LockSessionStore) Decode(data []byte) error {
+	var snapshot lockStoreSnapshot
+	if err := sonic.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+
+	ls.fenceToken = snapshot.FenceToken
+	ls.locks = make(map[string]*lock.LockEntry)
+
+	for k, v := range snapshot.Locks {
+		ls.locks[k] = v
+	}
+
+	return nil
 }
 
 func (ls *LockSessionStore) acquire(cmd *lock.AcquireLockCommand) *lock.AcquireLockCommandResponse {

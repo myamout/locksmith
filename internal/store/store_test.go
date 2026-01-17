@@ -10,10 +10,7 @@ import (
 
 // newTestStore creates a new LockSessionStore for testing.
 func newTestStore() *LockSessionStore {
-	return &LockSessionStore{
-		locks:      make(map[string]*lock.LockEntry),
-		fenceToken: 0,
-	}
+	return NewLockSessionStore()
 }
 
 // acquireLock is a helper that acquires a lock and returns the response.
@@ -1048,6 +1045,304 @@ func TestLockSessionStore_ReAcquireByExpiration(t *testing.T) {
 		if resp2.FenceToken <= resp1.FenceToken {
 			t.Errorf("new FenceToken %d should be greater than old %d",
 				resp2.FenceToken, resp1.FenceToken)
+		}
+	})
+}
+
+func TestNewLockSessionStore(t *testing.T) {
+	t.Run("creates new store", func(t *testing.T) {
+		store := NewLockSessionStore()
+		if store == nil {
+			t.Fatal("NewLockSessionStore returned nil")
+		}
+	})
+
+	t.Run("store has empty locks map", func(t *testing.T) {
+		store := NewLockSessionStore()
+		if len(store.locks) != 0 {
+			t.Errorf("expected empty locks map, got %d entries", len(store.locks))
+		}
+	})
+
+	t.Run("store has zero fence token", func(t *testing.T) {
+		store := NewLockSessionStore()
+		if store.fenceToken != 0 {
+			t.Errorf("fenceToken = %d, want 0", store.fenceToken)
+		}
+	})
+}
+
+func TestLockSessionStore_Encode(t *testing.T) {
+	t.Run("encode empty store", func(t *testing.T) {
+		store := NewLockSessionStore()
+
+		data, err := store.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+		if len(data) == 0 {
+			t.Error("Encode() returned empty data")
+		}
+	})
+
+	t.Run("encode store with locks", func(t *testing.T) {
+		store := NewLockSessionStore()
+
+		// Add some locks
+		for i := range 5 {
+			key := "resource-" + string(rune('a'+i))
+			cmd := lock.NewAcquireLockCommand(key, "client-1", 30*time.Second)
+			cmd.SetAppliedAt(time.Now())
+			store.Action(cmd)
+		}
+
+		data, err := store.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+		if len(data) == 0 {
+			t.Error("Encode() returned empty data")
+		}
+	})
+
+	t.Run("encode preserves fence token", func(t *testing.T) {
+		store := NewLockSessionStore()
+
+		// Acquire several locks to increment fence token
+		for i := range 10 {
+			key := "resource-" + string(rune('a'+i))
+			cmd := lock.NewAcquireLockCommand(key, "client-1", 30*time.Second)
+			cmd.SetAppliedAt(time.Now())
+			store.Action(cmd)
+		}
+
+		data, err := store.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		// Decode into a new store
+		newStore := NewLockSessionStore()
+		err = newStore.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+
+		if newStore.fenceToken != store.fenceToken {
+			t.Errorf("fenceToken = %d, want %d", newStore.fenceToken, store.fenceToken)
+		}
+	})
+}
+
+func TestLockSessionStore_Decode(t *testing.T) {
+	t.Run("decode empty store", func(t *testing.T) {
+		original := NewLockSessionStore()
+		data, err := original.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		store := NewLockSessionStore()
+		err = store.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+	})
+
+	t.Run("decode store with locks", func(t *testing.T) {
+		original := NewLockSessionStore()
+
+		// Add some locks
+		keys := []string{"resource-a", "resource-b", "resource-c"}
+		for _, key := range keys {
+			cmd := lock.NewAcquireLockCommand(key, "client-1", 30*time.Second)
+			cmd.SetAppliedAt(time.Now())
+			original.Action(cmd)
+		}
+
+		data, err := original.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		store := NewLockSessionStore()
+		err = store.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+
+		// Verify all locks are restored
+		if len(store.locks) != len(keys) {
+			t.Errorf("expected %d locks, got %d", len(keys), len(store.locks))
+		}
+
+		for _, key := range keys {
+			if _, ok := store.locks[key]; !ok {
+				t.Errorf("expected lock %s to exist", key)
+			}
+		}
+	})
+
+	t.Run("decode invalid data returns error", func(t *testing.T) {
+		store := NewLockSessionStore()
+		err := store.Decode([]byte("invalid json"))
+		if err == nil {
+			t.Error("expected error when decoding invalid data")
+		}
+	})
+
+	t.Run("decode empty data returns error", func(t *testing.T) {
+		store := NewLockSessionStore()
+		err := store.Decode([]byte{})
+		if err == nil {
+			t.Error("expected error when decoding empty data")
+		}
+	})
+
+	t.Run("decode overwrites existing state", func(t *testing.T) {
+		// Create original store with locks
+		original := NewLockSessionStore()
+		cmd := lock.NewAcquireLockCommand("original-key", "client-1", 30*time.Second)
+		cmd.SetAppliedAt(time.Now())
+		original.Action(cmd)
+
+		data, err := original.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		// Create another store with different locks
+		store := NewLockSessionStore()
+		cmd2 := lock.NewAcquireLockCommand("different-key", "client-2", 30*time.Second)
+		cmd2.SetAppliedAt(time.Now())
+		store.Action(cmd2)
+
+		// Verify different-key exists before decode
+		if _, ok := store.locks["different-key"]; !ok {
+			t.Fatal("expected different-key to exist before decode")
+		}
+
+		// Decode original data
+		err = store.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+
+		// Verify different-key no longer exists
+		if _, ok := store.locks["different-key"]; ok {
+			t.Error("expected different-key to be overwritten by decode")
+		}
+
+		// Verify original-key now exists
+		if _, ok := store.locks["original-key"]; !ok {
+			t.Error("expected original-key to exist after decode")
+		}
+	})
+}
+
+func TestLockSessionStore_EncodeDecodeRoundTrip(t *testing.T) {
+	t.Run("full round trip preserves state", func(t *testing.T) {
+		original := NewLockSessionStore()
+
+		// Create complex state
+		type lockInfo struct {
+			key        string
+			clientID   string
+			fenceToken int
+		}
+		locks := make([]lockInfo, 0)
+
+		for i := range 10 {
+			key := "resource-" + string(rune('a'+i))
+			clientID := "client-" + string(rune('1'+i%3))
+
+			cmd := lock.NewAcquireLockCommand(key, clientID, time.Hour)
+			cmd.SetAppliedAt(time.Now())
+			result := original.Action(cmd)
+
+			resp := result.(*lock.AcquireLockCommandResponse)
+			if resp.Error == nil {
+				locks = append(locks, lockInfo{
+					key:        key,
+					clientID:   clientID,
+					fenceToken: resp.FenceToken,
+				})
+			}
+		}
+
+		// Encode
+		data, err := original.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		// Decode into new store
+		restored := NewLockSessionStore()
+		err = restored.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+
+		// Verify fence token
+		if restored.fenceToken != original.fenceToken {
+			t.Errorf("fenceToken = %d, want %d", restored.fenceToken, original.fenceToken)
+		}
+
+		// Verify all locks
+		for _, l := range locks {
+			entry, ok := restored.locks[l.key]
+			if !ok {
+				t.Errorf("expected lock %s to exist", l.key)
+				continue
+			}
+			if entry.ClientID != l.clientID {
+				t.Errorf("lock %s: ClientID = %q, want %q", l.key, entry.ClientID, l.clientID)
+			}
+			if entry.FenceToken != l.fenceToken {
+				t.Errorf("lock %s: FenceToken = %d, want %d", l.key, entry.FenceToken, l.fenceToken)
+			}
+		}
+	})
+
+	t.Run("operations work after restore", func(t *testing.T) {
+		original := NewLockSessionStore()
+
+		// Acquire a lock
+		acquireCmd := lock.NewAcquireLockCommand("resource-1", "client-1", time.Hour)
+		acquireCmd.SetAppliedAt(time.Now())
+		acquireResp := original.Action(acquireCmd).(*lock.AcquireLockCommandResponse)
+
+		if acquireResp.Error != nil {
+			t.Fatalf("failed to acquire lock: %v", *acquireResp.Error)
+		}
+
+		// Encode and restore
+		data, err := original.Encode()
+		if err != nil {
+			t.Fatalf("Encode() error = %v", err)
+		}
+
+		restored := NewLockSessionStore()
+		err = restored.Decode(data)
+		if err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+
+		// Renew should work on restored store
+		renewCmd := lock.NewRenewLockCommand("resource-1", "client-1", acquireResp.FenceToken, 2*time.Hour)
+		renewCmd.SetAppliedAt(time.Now())
+		renewResp := restored.Action(renewCmd).(*lock.RenewLockCommandResponse)
+
+		if renewResp.Error != nil {
+			t.Errorf("renew failed on restored store: %v", *renewResp.Error)
+		}
+
+		// Release should work on restored store
+		releaseCmd := lock.NewReleaseLockCommand("resource-1", "client-1", acquireResp.FenceToken)
+		releaseResp := restored.Action(releaseCmd).(*lock.LockCommandResponse)
+
+		if releaseResp.Error != nil {
+			t.Errorf("release failed on restored store: %v", *releaseResp.Error)
 		}
 	})
 }
