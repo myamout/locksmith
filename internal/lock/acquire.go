@@ -48,3 +48,11 @@ func (a *AcquireLockCommand) ExpiresAt() time.Time {
 func (a *AcquireLockCommand) Expired() bool {
 	return time.Now().After(a.ExpiresAt())
 }
+
+type AcquireLockCommandResponse struct {
+	LockCommandResponse
+
+	FenceToken int
+	HeldBy     string
+	ExpiresAt  time.Time
+}
