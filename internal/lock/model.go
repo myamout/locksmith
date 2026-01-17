@@ -40,9 +40,9 @@ func (l *LockCommandResponse) Success() bool {
 }
 
 type LockEntry struct {
-	Key        string
-	ClientID   string
-	FenceToken int
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
+	Key        string    `json:"key"`
+	ClientID   string    `json:"clientID"`
+	FenceToken int       `json:"fenceToken"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
