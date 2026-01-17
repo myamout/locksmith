@@ -1,5 +1,7 @@
 package lock
 
+import "time"
+
 type LockCommandType int
 
 const (
@@ -27,4 +29,20 @@ func (l LockCommandType) ToString() string {
 type LockCommand interface {
 	Type() LockCommandType
 	Key() string
+}
+
+type LockCommandResponse struct {
+	Error *error
+}
+
+func (l *LockCommandResponse) Success() bool {
+	return l.Error == nil
+}
+
+type LockEntry struct {
+	Key        string
+	ClientID   string
+	FenceToken int
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
 }

@@ -54,3 +54,9 @@ func (r *RenewLockCommand) AppliedAt() time.Time {
 func (r *RenewLockCommand) SetAppliedAt(t time.Time) {
 	r.appliedAt = t
 }
+
+type RenewLockCommandResponse struct {
+	LockCommandResponse
+
+	ExpiresAt time.Time
+}
