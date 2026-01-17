@@ -5,7 +5,7 @@ import "time"
 type AcquireLockCommand struct {
 	key       string
 	clientID  string
-	expiresAt time.Time
+	expiresIn time.Duration
 	appliedAt time.Time
 }
 
@@ -13,7 +13,7 @@ func NewAcquireLockCommand(key, clientID string, expiresIn time.Duration) *Acqui
 	return &AcquireLockCommand{
 		key:       key,
 		clientID:  clientID,
-		expiresAt: time.Now().Add(expiresIn),
+		expiresIn: expiresIn,
 	}
 }
 
@@ -37,6 +37,14 @@ func (a *AcquireLockCommand) ClientID() string {
 	return a.clientID
 }
 
+func (a *AcquireLockCommand) ExpiresIn() time.Duration {
+	return a.expiresIn
+}
+
+func (a *AcquireLockCommand) ExpiresAt() time.Time {
+	return a.appliedAt.Add(a.ExpiresIn())
+}
+
 func (a *AcquireLockCommand) Expired() bool {
-	return time.Now().After(a.expiresAt)
+	return time.Now().After(a.ExpiresAt())
 }

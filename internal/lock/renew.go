@@ -6,7 +6,7 @@ type RenewLockCommand struct {
 	key        string
 	clientID   string
 	fenceToken int
-	expiresAt  time.Time
+	expiresIn  time.Duration
 	appliedAt  time.Time
 }
 
@@ -15,7 +15,7 @@ func NewRenewLockCommand(key, clientID string, fenceToken int, expiresIn time.Du
 		key:        key,
 		clientID:   clientID,
 		fenceToken: fenceToken,
-		expiresAt:  time.Now().Add(expiresIn),
+		expiresIn:  expiresIn,
 	}
 }
 
@@ -31,8 +31,16 @@ func (r *RenewLockCommand) ClientID() string {
 	return r.clientID
 }
 
+func (r *RenewLockCommand) ExpiresIn() time.Duration {
+	return r.expiresIn
+}
+
+func (r *RenewLockCommand) ExpiresAt() time.Time {
+	return r.appliedAt.Add(r.ExpiresIn())
+}
+
 func (r *RenewLockCommand) Expired() bool {
-	return time.Now().After(r.expiresAt)
+	return time.Now().After(r.ExpiresAt())
 }
 
 func (r *RenewLockCommand) FenceToken() int {
